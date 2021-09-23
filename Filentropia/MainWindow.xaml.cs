@@ -14,6 +14,7 @@ using System.Windows.Navigation;
 using System.Windows.Shapes;
 
 using Microsoft.WindowsAPICodePack.Dialogs;
+using System.IO;
 
 namespace Filentropia
 {
@@ -25,15 +26,20 @@ namespace Filentropia
     }
 
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Sharity is fun name too, but it already exist in linux.
     /// </summary>
     public partial class MainWindow : Window
     {
         private AppState appState = AppState.NoFolderSelected;
         private string folderPath;
+        private FileSystemWatcher watcher = null;
 
         // Hmm, tanken är att appen ska tanka upp filerna via ftp till servern, och så ska alla andra
         // som upptäcker förändringarna automatiskt ladda ner nya och förändrade filer. 
+
+        // TODO: File modified event happens twice on every save, and might be a hogger. 
+        // ..add file to a list, fileEvents, and merge file modification events for same file. 
+        // Also, upload changes in this list once every say five seconds.
 
         public MainWindow()
         {
@@ -50,8 +56,9 @@ namespace Filentropia
                     if(newState == AppState.FolderSelected)
                     {
                         // Going from no folder selected to folder selected is ok.
-                        appState = newState;
                         this.folderPath = folderPath;
+
+                        appState = newState;
                         UpdateInterface();
                         return true;
                     }
@@ -60,15 +67,19 @@ namespace Filentropia
                     if (newState == AppState.FolderShared)
                     {
                         // A folder is selected, and now user want to share it. That's ok.
+                        SetupFolderListener();
+
                         appState = newState;
                         UpdateInterface();
+
                         return true;
                     }
                     else if(newState == AppState.FolderSelected)
                     {
                         // User wanted to select a new folder, still not shared. That's ok.
-                        appState = newState;
                         this.folderPath = folderPath;
+
+                        appState = newState;
                         UpdateInterface();
                         return true;
                     }
@@ -77,6 +88,8 @@ namespace Filentropia
                     if (newState == AppState.FolderSelected)
                     {
                         // The currently shared folder is unshared, since a new folder is selected. That's ok.
+                        RemoveFolderListener();
+
                         appState = newState;
                         UpdateInterface();
                         return true;
@@ -84,8 +97,10 @@ namespace Filentropia
                     else if(newState == AppState.NoFolderSelected)
                     {
                         // The currently shared folder is unshared, since user wanted to unshare it. That's ok.
-                        appState = newState;
+                        RemoveFolderListener();
                         this.folderPath = "none";
+
+                        appState = newState;
                         UpdateInterface();
                         return true;
                     }
@@ -126,6 +141,100 @@ namespace Filentropia
                 default:
                     throw new Exception("You forgot adding this state! " + appState);
             }
+        }
+
+        private void RemoveFolderListener()
+        {
+            if (watcher != null)
+            {
+                watcher.Dispose();
+                watcher = null;
+            }
+        }
+
+        private bool SetupFolderListener()
+        {
+            try
+            {
+                RemoveFolderListener();
+
+                watcher = new FileSystemWatcher(folderPath);
+
+                /*watcher.NotifyFilter = NotifyFilters.Attributes
+                                 | NotifyFilters.CreationTime
+                                 | NotifyFilters.DirectoryName
+                                 | NotifyFilters.FileName
+                                 | NotifyFilters.LastAccess
+                                 | NotifyFilters.LastWrite
+                                 | NotifyFilters.Security
+                                 | NotifyFilters.Size;*/
+
+                // Any file changed, created, renamed or deleted in the folder.
+                watcher.Changed += FolderContent_Changed;
+                watcher.Created += FolderContent_Created;
+                watcher.Renamed += FolderContent_Renamed;
+                watcher.Deleted += FolderContent_Deleted;
+                
+                // An error happened. Simply re-create the watcher.
+                watcher.Error += FolderContent_Error;
+
+                // It's always a good thing to enable the listener. 
+                watcher.EnableRaisingEvents = true;
+            }
+            catch(Exception ex)
+            {
+                MessageBox.Show("Folder listener exception: " + ex.Message);
+                return false;
+            }
+
+            return true;
+        }
+
+        private void FolderContent_Error(object sender, ErrorEventArgs e)
+        {
+            MessageBox.Show("A folder listener exception happened: " + e.GetException().Message, "Restarting listener");
+
+            if (!SetupFolderListener())
+            {
+                MessageBox.Show("Could not recreate the folder listener, no changes you make to the folder will be uploaded. Please restart the app. ", "Error");
+            }
+        }
+
+        private void FolderContent_Deleted(object sender, FileSystemEventArgs e)
+        {
+            string fileName = e.Name;
+
+            MessageBox.Show("File deleted: " + fileName);
+
+            // Delete file online as well.
+        }
+
+        private void FolderContent_Renamed(object sender, RenamedEventArgs e)
+        {
+            string oldFileName = e.OldName;
+            string newFileName = e.Name;
+
+            MessageBox.Show("File renamed: " + oldFileName + " -> " + newFileName);
+
+            // Rename file online as well.
+        }
+
+        private void FolderContent_Created(object sender, FileSystemEventArgs e)
+        {
+            string fileName = e.Name;
+
+            MessageBox.Show("File created: " + fileName);
+
+            // Upload new file to server.
+        }
+
+        private void FolderContent_Changed(object sender, FileSystemEventArgs e)
+        {
+            string fileName = e.Name;
+
+            MessageBox.Show("File changed: " + fileName);
+
+            // Upload and overwrite file at server.
         }
 
         private void AddFolder_Click(object sender, RoutedEventArgs e)
