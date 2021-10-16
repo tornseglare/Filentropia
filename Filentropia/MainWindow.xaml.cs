@@ -25,6 +25,21 @@ namespace Filentropia
         FolderShared
     }
 
+    public class FileEvent
+    {
+
+    }
+
+    public class FileEvents
+    {
+        private List<FileEvent> fileEvents = new List<FileEvent>();
+
+        public void Add(FileEvent fileEvent)
+        {
+            fileEvents.Add(fileEvent);
+        }
+    }
+
     /// <summary>
     /// Sharity is fun name too, but it already exist in linux.
     /// </summary>
@@ -33,6 +48,7 @@ namespace Filentropia
         private AppState appState = AppState.NoFolderSelected;
         private string folderPath;
         private FileSystemWatcher watcher = null;
+        private List<FileEvent> fileEvents = new List<FileEvent>();
 
         // Hmm, tanken är att appen ska tanka upp filerna via ftp till servern, och så ska alla andra
         // som upptäcker förändringarna automatiskt ladda ner nya och förändrade filer. 
