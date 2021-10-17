@@ -11,6 +11,7 @@
         <Label x:Name="SelectedFolderLabel" Content="Selected folder: mjau" HorizontalAlignment="Left" Margin="10,34,0,0" VerticalAlignment="Top"/>
         <Button x:Name="ShareFolderButton" Content="Share folder" HorizontalAlignment="Stretch" Margin="10,65,10,10" VerticalAlignment="Top" Click="ShareFolderButton_Click"/>
         <Button x:Name="UnshareFolderButton" Content="Unshare folder" HorizontalAlignment="Stretch" Margin="10,89,10,10" VerticalAlignment="Top" Click="UnshareFolderButton_Click"/>
+        <Button x:Name="SelectFolder2Button" Content="Folder 2" HorizontalAlignment="Left" Margin="594,35,0,0" VerticalAlignment="Top" Width="196" Click="SelectFolder2Button_Click"/>
 
     </Grid>
 </Window>
