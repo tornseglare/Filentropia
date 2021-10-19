@@ -16,9 +16,14 @@ using System.Windows.Shapes;
 using Microsoft.WindowsAPICodePack.Dialogs;
 using System.IO;
 using System.Diagnostics;
+using System.Collections.ObjectModel;
 
 namespace Filentropia
 {
+    // JUST NU: 
+    // 1. FolderListener ska ha en funktion Share() som aktiverar alla lyssnare, samt en Unshare() som tar bort dem igen.
+    // 2. RemoveFolderListener() är väl rätt.
+
     public enum AppState
     {
         NoFolderSelected,
@@ -117,14 +122,15 @@ namespace Filentropia
     /// </summary>
     public class FolderListener : IDisposable
     {
-        private string folderPath;
         private FileSystemWatcher watcher;
 
         private FileEvents fileEvents = new FileEvents();
 
+        public string FolderPath { get; init; }
+
         public FolderListener(string folderPath)
         {
-            this.folderPath = folderPath;
+            this.FolderPath = folderPath;
 
             try
             {
@@ -149,7 +155,7 @@ namespace Filentropia
         {
             RemoveFolderListener();
 
-            watcher = new FileSystemWatcher(folderPath);
+            watcher = new FileSystemWatcher(FolderPath);
 
             /*watcher.NotifyFilter = NotifyFilters.Attributes
                                 | NotifyFilters.CreationTime
@@ -183,7 +189,7 @@ namespace Filentropia
             }
             catch(Exception ex)
             {
-                MessageBox.Show($"Could not recreate the folder listener, no changes you make to the folder will be uploaded. Please restart the app.{Environment.NewLine}Folder: {folderPath}{Environment.NewLine}Exception message: {ex.Message}", "Error");
+                MessageBox.Show($"Could not recreate the folder listener, no changes you make to the folder will be uploaded. Please restart the app.{Environment.NewLine}Folder: {FolderPath}{Environment.NewLine}Exception message: {ex.Message}", "Error");
             }
         }
 
@@ -237,12 +243,17 @@ namespace Filentropia
 
     /// <summary>
     /// Sharity is fun name too, but it already exist in linux.
+    /// Syncopia sounds nice too.
     /// </summary>
     public partial class MainWindow : Window
     {
         private AppState appState = AppState.NoFolderSelected;
         private string folderOnePath;
         private string folderTwoPath;
+
+        // TODO: Easy enough to add x folders later.
+        // To let the FileListenersListBox ui element listen for changes in the list of folderListeners, we let it be of type ObservableCollection.
+        private ObservableCollection<FolderListener> folderListeners = new ObservableCollection<FolderListener>();
 
         // These two folders will be synchronized.
         private FolderListener folderOneListener;
@@ -251,14 +262,53 @@ namespace Filentropia
         // Hmm, tanken är att appen ska tanka upp filerna via ftp till servern, och så ska alla andra
         // som upptäcker förändringarna automatiskt ladda ner nya och förändrade filer. 
 
-        // TODO: File modified event happens twice on every save, and might be a hogger. 
-        // ..add file to a list, fileEvents, and merge file modification events for same file. 
-        // Also, upload changes in this list once every say five seconds.
-
         public MainWindow()
         {
             InitializeComponent();
+
+            // NOTE: I don't use ListBox and ItemsSource and Styles, because I don't know how to create clickable buttons inside each element. I want each element to behave like its own entity.
+            // Magic happens here, the listbox gets connected with the folderListeners-list.
+            // FolderListenersListBox.ItemsSource = folderListeners;
+
             UpdateInterface();
+        }
+
+        public bool AddFolderListener(string folderPath)
+        {
+            FolderListener fl = folderListeners.Where(f => f.FolderPath == folderPath).FirstOrDefault();
+
+            if (fl == null)
+            {
+                fl = new FolderListener(folderPath);
+                folderListeners.Add(fl);
+
+                FolderListenersStackPanel.Children.Add(new UserControlFolderListener(folderPath, this));
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Removes the folder listener with the given folderPath.
+        /// </summary>
+        public void RemoveFolderListener(string folderPath)
+        {
+            FolderListener fl = folderListeners.Where(f => f.FolderPath == folderPath).FirstOrDefault();
+
+            if (fl != null)
+            {
+                _ = folderListeners.Remove(fl);
+            }
+
+            foreach(UserControlFolderListener l in FolderListenersStackPanel.Children)
+            {
+                if(l.FolderName == folderPath)
+                {
+                    FolderListenersStackPanel.Children.Remove(l);
+                    break;
+                }
+            }
         }
 
         // Allow transitions between states, some of them.
@@ -401,6 +451,30 @@ namespace Filentropia
             {
                 folderTwoPath = dialog.FileName;
             }
+        }
+
+        private void ShareFolder2Button_Click(object sender, RoutedEventArgs e)
+        {
+            folderTwoListener = new FolderListener(folderTwoPath);
+        }
+
+        private void AddNewFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Microsoft.WindowsAPICodePack.Dialogs
+            CommonOpenFileDialog dialog = new CommonOpenFileDialog();
+            dialog.IsFolderPicker = true;
+
+            if (dialog.ShowDialog() == CommonFileDialogResult.Ok)
+            {
+                if(!AddFolderListener(dialog.FileName))
+                {
+                    MessageBox.Show("Folder is already in list!");
+                }
+            }
+        }
+
+        private void FolderListenersListBox_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
         }
     }
 }

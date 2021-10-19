@@ -11,7 +11,12 @@
         <Label x:Name="SelectedFolderLabel" Content="Selected folder: mjau" HorizontalAlignment="Left" Margin="10,34,0,0" VerticalAlignment="Top"/>
         <Button x:Name="ShareFolderButton" Content="Share folder" HorizontalAlignment="Stretch" Margin="10,65,10,10" VerticalAlignment="Top" Click="ShareFolderButton_Click"/>
         <Button x:Name="UnshareFolderButton" Content="Unshare folder" HorizontalAlignment="Stretch" Margin="10,89,10,10" VerticalAlignment="Top" Click="UnshareFolderButton_Click"/>
-        <Button x:Name="SelectFolder2Button" Content="Folder 2" HorizontalAlignment="Left" Margin="594,35,0,0" VerticalAlignment="Top" Width="196" Click="SelectFolder2Button_Click"/>
+        <Button x:Name="SelectFolder2Button" Content="Folder 2" HorizontalAlignment="Left" Margin="594,114,0,0" VerticalAlignment="Top" Width="196" Click="SelectFolder2Button_Click"/>
+        <Button x:Name="ShareFolder2Button" Content="Share folder 2" Margin="594,139,10,0" VerticalAlignment="Top" Click="ShareFolder2Button_Click" />
 
+        <Button x:Name="AddNewFolderButton" Content="Add folder" HorizontalAlignment="Left" Margin="10,139,0,0" VerticalAlignment="Top" Click="AddNewFolderButton_Click"/>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="10,164,10,10">
+            <StackPanel x:Name="FolderListenersStackPanel" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Orientation="Vertical" />
+        </ScrollViewer>
     </Grid>
 </Window>
