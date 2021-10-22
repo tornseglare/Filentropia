@@ -20,33 +20,31 @@ namespace Filentropia
     /// </summary>
     public partial class UserControlFolderListener : UserControl
     {
-        protected string folderName;
-        protected bool shared = false;
-
+        protected FolderListener folderListener;
         protected MainWindow mainWindow;
 
         public string FolderName
         {
             get 
             {
-                return folderName;
+                return folderListener.FolderPath;
             }
         }
 
-        public UserControlFolderListener(string folderName, MainWindow mainWindow)
+        public UserControlFolderListener(FolderListener folderListener, MainWindow mainWindow)
         {
             InitializeComponent();
 
-            this.folderName = folderName;
+            this.folderListener = folderListener;
             this.mainWindow = mainWindow;
-            FolderNameLabel.Content = folderName;
+            FolderNameLabel.Content = FolderName;
 
             UpdateInterface();
         }
 
         private void UpdateInterface()
         {
-            if(shared)
+            if(folderListener.Shared)
             {
                 ShareFolderButton.Visibility = Visibility.Hidden;
                 UnShareFolderButton.Visibility = Visibility.Visible;
@@ -62,19 +60,19 @@ namespace Filentropia
 
         private void ShareFolderButton_Click(object sender, RoutedEventArgs e)
         {
-            shared = true;
+            folderListener.Share();
             UpdateInterface();
         }
 
         private void UnShareFolderButton_Click(object sender, RoutedEventArgs e)
         {
-            shared = false;
+            folderListener.Unshare();
             UpdateInterface();
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            mainWindow.RemoveFolderListener(folderName);
+            mainWindow.RemoveFolderListener(folderListener.FolderPath);
         }
     }
 }
