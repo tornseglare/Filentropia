@@ -10,10 +10,11 @@ namespace Filentropia
 {
     public enum eFileEvents
     {
-        Deleted,
+        Deleted,    // File got deleted or moved from the folder.
         Renamed,
         Created,
         Changed,
+        Sync,       // File is newly shared and must be compared to other shared folders.
     }
 
     /// <summary>
@@ -35,6 +36,11 @@ namespace Filentropia
     /// </summary>
     public record FileEvent
     {
+        public FileEvent()
+        {
+            TimeOfEvent = DateTime.Now;
+        }
+
         // FileName is the identier for the file.
         // The init means we can set this 'readonly' value when creating a new FileEvent. After creation this value is readonly since it only has a getter.
         // 'private set' makes it settable in this class functions.
@@ -42,6 +48,8 @@ namespace Filentropia
         public string FileName { get; init; }
 
         public eFileEvents Event { get; init; }
+
+        public DateTime TimeOfEvent { get; init; }
     }
 
     /// <summary>
@@ -49,6 +57,11 @@ namespace Filentropia
     /// </summary>
     public record FileNameChangedEvent : FileEvent
     {
+        public FileNameChangedEvent()
+        {
+            Event = eFileEvents.Renamed;
+        }
+
         public string OldFileName { get; init; }
     }
 
@@ -58,7 +71,25 @@ namespace Filentropia
     /// </summary>
     public class FileEvents
     {
-        private List<FileEvent> fileEvents = new List<FileEvent>();
+        private readonly object fileEventsLock = new();
+        private readonly List<FileEvent> fileEvents = new();
+
+        /// <summary>
+        /// Returns the list of file events so far, and clear the internal list.
+        /// </summary>
+        public List<FileEvent> PopList()
+        {
+            List<FileEvent> fe;
+
+            // https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/lock-statement
+            lock (fileEventsLock)
+            {
+                fe = fileEvents.GetRange(0, fileEvents.Count);
+                fileEvents.Clear();
+            }
+
+            return fe;
+        }
 
         public void ClearList()
         {
@@ -67,48 +98,100 @@ namespace Filentropia
 
         public void FileDeleted(string fileName)
         {
-            FileEvent fe = new FileEvent() { Event = eFileEvents.Deleted, FileName = fileName };
-            fileEvents.Add(fe);
-            Debug.Write(fileEvents);
+            int count;
+            FileEvent fe;
+
+            lock (fileEventsLock)
+            {
+                // Delete any older file events for this file as they are pointless now.
+                count = fileEvents.RemoveAll(x => x.FileName == fileName);
+
+                fe = new() { Event = eFileEvents.Deleted, FileName = fileName };
+                fileEvents.Add(fe);
+            }
+            Debug.WriteLine("Removed {0} file events for deleted file {1}.", new object[] { count, fileName });
+            Debug.WriteLine(fe);
         }
 
         public void FileCreated(string fileName)
         {
-            FileEvent fe = new FileEvent() { Event = eFileEvents.Created, FileName = fileName };
-            fileEvents.Add(fe);
-            Debug.Write(fileEvents);
+            FileEvent fe = new() { Event = eFileEvents.Created, FileName = fileName };
+            Debug.WriteLine(fe);
+            lock (fileEventsLock)
+            {
+                fileEvents.Add(fe);
+            }
         }
 
         public void FileChanged(string fileName)
         {
-            FileEvent fe = new FileEvent() { Event = eFileEvents.Changed, FileName = fileName };
-
-            // Since a file change event happens twice, we just ignore the second event.
-            // Please note the danger in this: if a file's content changes (very) frequently, this code will 
-            // ignore any later changes as long as the file has not been uploaded. 
-            //   <-This is on the other hand not dangerous as long as there is no danger of missing a file change
-            //     in the moment when the file gets uploaded.
-            //    TODO: To avoid this, pop the element from the list FIRST, and after that, upload the file. 
-            //          The effect of doing this is that we do not miss any file change events.
+            // Since a file change event happens twice, we replace with the latest event.
+            // This is safer, since if the poller gets inbetween and fetches all file events, this list is empty.
+            // The result is an extra upload of the file which will happen later. But we don't run the risk of 
+            // missing a file changed event. 
             // 
-            if (fileEvents.FindIndex(x => x.FileName == fileName && x.Event == eFileEvents.Changed) == -1)
+            FileEvent fe;
+            lock (fileEventsLock)
             {
-                fileEvents.Add(fe);
-                Debug.Write(fileEvents);
+                fe = fileEvents.FirstOrDefault(x => x.FileName == fileName && x.Event == eFileEvents.Changed);
+
+                if (fe == null)
+                {
+                    fe = new() { Event = eFileEvents.Changed, FileName = fileName };
+                    Debug.WriteLine(fe);
+
+                    fileEvents.Add(fe);
+                }
+                else
+                {
+                    FileEvent newFe = fe with { TimeOfEvent = DateTime.Now };
+                    Debug.WriteLine(fe);
+
+                    _ = fileEvents.Remove(fe);
+                    fileEvents.Add(newFe);
+                }
             }
+            Debug.WriteLine(fe);
         }
 
         public void FileRenamed(string oldFileName, string newFileName)
         {
-            FileNameChangedEvent fe = new FileNameChangedEvent()
+            FileNameChangedEvent fe = new()
             {
-                Event = eFileEvents.Renamed,
                 FileName = newFileName,
                 OldFileName = oldFileName
             };
+            Debug.WriteLine(fe);
 
-            fileEvents.Add(fe);
-            Debug.Write(fileEvents);
+            lock(fileEventsLock)
+            {
+                fileEvents.Add(fe);
+
+                // Find any events with the old filename in the list, rename their FileName to the new, and place after this event.
+                // Reason: Otherwise the event(s) would not find the now renamed file.
+                // 
+                // NOTE: It can still happen! If the poller get inbetween and empty the list, it will try to find files whose name are now different.
+                // <-En lösning vore att låta pollaren spara misslyckade event, och se om det kommer ett filename change event eller ett delete-event.
+                List<FileEvent> fes = fileEvents.FindAll(x => x.FileName == oldFileName);
+                int count = fileEvents.RemoveAll(x => x.FileName == oldFileName && x.Equals(fe) == false);
+
+                foreach (FileEvent fileEvent in fes)
+                {
+                    FileEvent newFileEvent = fileEvent with { FileName = newFileName };
+                    fileEvents.Add(newFileEvent);
+                }
+            }
+        }
+
+        public void FileShared(string fileName)
+        {
+            FileEvent fe = new() { Event = eFileEvents.Sync, FileName = fileName };
+            Debug.WriteLine(fe);
+
+            lock (fileEventsLock)
+            {
+                fileEvents.Add(fe);
+            }
         }
     }
 }

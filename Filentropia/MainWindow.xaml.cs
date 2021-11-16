@@ -20,17 +20,54 @@ using System.Collections.ObjectModel;
 
 namespace Filentropia
 {
+    /* JUST NU: Se rad 84 i FolderListener.cs
+     * 
+      -DONE: När ett file event har ägt rum så kan en simpel timer skapas, som startas om varje gång ett event händer.  
+       På det viset blir det mindre 'trafik', dvs. den samlar ihop flera events innan den börjar arbeta.
+       Timern får ha en max-tid på säg 10 sekunder, sen börjar den beta av listan ändå.
+      -Som nämnts nedan, när en fil byter namn kan tidigare event misslyckas med sitt jobb eftersom EventDispatcher
+       körs kanske flera sekunder senare. Ex: Fil ändras, och byter sedan namn direkt efter. Då misslyckas file-change-eventet
+       hitta filen. Lösningen är att misslyckade event sparas och senare event får på något vis fogas samman med det äldre. 
+       
+        Deleted - Kastar samtliga tidigare event eftersom de blir meningslösa att utföra. [DONE]
+        Renamed - Uppdaterar samtliga tidigare Changed-event med det nya filnamnet, så de kan hitta filen. 
+                    Lägger sig sedan FÖRE tidigare Changed event.
+        Created - Filen skapas, inget konstigt. 
+        Changed - Kastar tidigare Changed-event, det räcker med att ett sådant event händer.
+                    Uppdateras med nytt filnamn ifall ett Renamed-event händer.
+        Sync    - Filen har just delats, och den måste kolla med alla andra kataloger ifall filen ifråga redan finns. 
+                    a. Om inte, enkelt, kopiera upp den. 
+                    b. Finns, krångligt. Titta på senast ändrad, ta den nyaste.
+                        x. Filen är äldre och en nyare laddas ner. 
+                            Den skapar då en underkatalog .duplicates och lägger den gamla filen som ersätts däri, för att undvika katastrof.
+                        y. Filen är nyare och laddas alltså upp. 
+                            Mottagaren ansvarar själv för att skapa en egen underkatalog .duplicates. 
+    
+    */
+
     // JUST NU: 
+    // 
+    //
     // 1. DONE: FolderListener ska ha en funktion Share() som aktiverar alla lyssnare, samt en Unshare() som tar bort dem igen.
     // 2. YEP: RemoveFolderListener() är väl rätt.
     // <-Nu kan man lägga till en katalog i listan, klicka på Share, och så är den det. :) 
-
-    public enum AppState
-    {
-        NoFolderSelected,
-        FolderSelected,
-        FolderShared
-    }
+    // 3. DONE: När en katalog nyss delats mha. Share() ska ett nytt fileevent skapas för varje fil i katalogen: Sync
+    //      <-Detta betyder bara att den ska kolla med alla andra kataloger ifall filen ifråga redan finns. 
+    //          a. Om inte, enkelt, kopiera upp den. 
+    //          b. Finns, krångligt. Titta på senast ändrad, ta den nyaste.
+    //                  <-Den får väl skapa en backup kanske? Skapa en underkatalog duplicates och lägg de gamla filerna som ersätts däri.
+    //      <-Om varje katalog gör så när de blir Shared() så är de ensamma ansvariga för 'sitt' och därmed kan x*y kataloger delas 
+    //        'utan problem'. :-)
+    //      <-Hur sätta upp själva 'avbetningen' av listorna på ett snyggt sätt? Busy-looping är ju inge snyggt..
+    // OBS: Man får ju alltid ta risken att en fil inte längre finns, för att den tagits bort eller bytt namn en sekund senare. 
+    //  <-Så när en fil ska kopieras upp till servern, och den inte finns, så kastar den helt enkelt eventet. 
+    //    Ett senare event föklarar med all säkerhet vad som hänt ändå, tex. en rename eller delete. 
+    //    <-OBS: En file change och sedan en rename kan göra att den försöker ladda upp innehållet, men misslyckas då den inte 
+    //      kan finna filen (eftersom den döpts om). Sedan byta namn, och det går ju bra. Därmed har den missat att ladda upp en ändring!
+    //      <-Enda praktiska lösningen blir nog att spara file-changed event som misslyckas att laddas upp, och uppdatera det med 
+    //        filename-changes som kommer senare. Sedan får den försöka igen genom att lägga in eventet på nytt, fast med det nya
+    //        filnamnet.
+    // 
 
     /// <summary>
     /// Sharity is fun name too, but it already exist in linux.
@@ -38,17 +75,8 @@ namespace Filentropia
     /// </summary>
     public partial class MainWindow : Window
     {
-        private AppState appState = AppState.NoFolderSelected;
-        private string folderOnePath;
-        private string folderTwoPath;
-
-        // TODO: Easy enough to add x folders later.
         // To let the FileListenersListBox ui element listen for changes in the list of folderListeners, we let it be of type ObservableCollection.
         private ObservableCollection<FolderListener> folderListeners = new ObservableCollection<FolderListener>();
-
-        // These two folders will be synchronized.
-        private FolderListener folderOneListener;
-        private FolderListener folderTwoListener;
 
         // Hmm, tanken är att appen ska tanka upp filerna via ftp till servern, och så ska alla andra
         // som upptäcker förändringarna automatiskt ladda ner nya och förändrade filer. 
@@ -60,8 +88,6 @@ namespace Filentropia
             // NOTE: I don't use ListBox and ItemsSource and Styles, because I don't know how to create clickable buttons inside each element. I want each element to behave like its own entity.
             // Magic happens here, the listbox gets connected with the folderListeners-list.
             // FolderListenersListBox.ItemsSource = folderListeners;
-
-            UpdateInterface();
         }
 
         public bool AddFolderListener(string folderPath)
@@ -73,7 +99,7 @@ namespace Filentropia
                 fl = new FolderListener(folderPath);
                 folderListeners.Add(fl);
 
-                FolderListenersStackPanel.Children.Add(new UserControlFolderListener(fl, this));
+                _ = FolderListenersStackPanel.Children.Add(new UserControlFolderListener(fl, this));
                 return true;
             }
 
@@ -85,7 +111,7 @@ namespace Filentropia
         /// </summary>
         public void RemoveFolderListener(string folderPath)
         {
-            FolderListener fl = folderListeners.Where(f => f.FolderPath == folderPath).FirstOrDefault();
+            FolderListener fl = folderListeners.FirstOrDefault(f => f.FolderPath == folderPath);
 
             if (fl != null)
             {
@@ -102,153 +128,6 @@ namespace Filentropia
             }
         }
 
-        // Allow transitions between states, some of them.
-        public bool SetState(AppState newState, string _folderPath = "")
-        {
-            switch(appState)
-            {
-                case AppState.NoFolderSelected:
-                    if(newState == AppState.FolderSelected)
-                    {
-                        // Going from no folder selected to folder selected is ok.
-                        folderOnePath = _folderPath;
-
-                        appState = newState;
-                        UpdateInterface();
-                        return true;
-                    }
-                    break;
-                case AppState.FolderSelected:
-                    if (newState == AppState.FolderShared)
-                    {
-                        // A folder is selected, and now user want to share it. That's ok.
-                        folderOneListener = new FolderListener(folderOnePath);
-
-                        appState = newState;
-                        UpdateInterface();
-
-                        return true;
-                    }
-                    else if(newState == AppState.FolderSelected)
-                    {
-                        // User wanted to select a new folder, still not shared. That's ok.
-                        folderOnePath = _folderPath;
-
-                        appState = newState;
-                        UpdateInterface();
-                        return true;
-                    }
-                    break;
-                case AppState.FolderShared:
-                    if (newState == AppState.FolderSelected)
-                    {
-                        // The currently shared folder is unshared, since a new folder is selected. That's ok.
-                        folderOneListener.Dispose();
-                        folderOneListener = null;
-
-                        appState = newState;
-                        UpdateInterface();
-                        return true;
-                    }
-                    else if(newState == AppState.NoFolderSelected)
-                    {
-                        // The currently shared folder is unshared, since user wanted to unshare it. That's ok.
-                        folderOneListener.Dispose();
-                        folderOneListener = null;
-                        folderOnePath = null;
-
-                        appState = newState;
-                        UpdateInterface();
-                        return true;
-                    }
-
-                    break;
-                default:
-                    throw new Exception("You forgot adding this state! " + newState);
-            }
-
-            // The transition was not ok.
-            Console.WriteLine("Transition between " + appState + " to " + newState + " is not allowed.");
-            return false;
-        }
-
-        private void UpdateInterface()
-        {
-            switch (appState)
-            {
-                case AppState.NoFolderSelected:
-                    SelectedFolderLabel.Content = "Selected folder: " + "none";
-                    AddFolderButton.Content = "Select folder";
-                    AddFolderButton.IsEnabled = true;
-                    ShareFolderButton.IsEnabled = false;
-                    UnshareFolderButton.IsEnabled = false;
-                    break;
-                case AppState.FolderSelected:
-                    SelectedFolderLabel.Content = "Selected folder: " + folderOnePath;
-                    AddFolderButton.Content = "Select another folder";
-                    ShareFolderButton.IsEnabled = true;
-                    UnshareFolderButton.IsEnabled = false;
-                    break;
-                case AppState.FolderShared:
-                    SelectedFolderLabel.Content = "Shared folder: " + folderOnePath;
-                    AddFolderButton.IsEnabled = false;
-                    ShareFolderButton.IsEnabled = false;
-                    UnshareFolderButton.IsEnabled = true;
-                    break;
-                default:
-                    throw new Exception("You forgot adding this state! " + appState);
-            }
-        }
-
-        private void AddFolder_Click(object sender, RoutedEventArgs e)
-        {
-            // Microsoft.WindowsAPICodePack.Dialogs
-            CommonOpenFileDialog dialog = new CommonOpenFileDialog();
-            dialog.IsFolderPicker = true;
-
-            if(dialog.ShowDialog() == CommonFileDialogResult.Ok)
-            {
-                //SelectedFolderLabel.Content = "Selected folder: " + dialog.FileName;
-                if (!SetState(AppState.FolderSelected, dialog.FileName))
-                    MessageBox.Show("Uh uh");
-                else
-                    MessageBox.Show("Folder selected, yey!");
-            }
-        }
-
-        private void ShareFolderButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!SetState(AppState.FolderShared))
-                MessageBox.Show("Uh uh");
-            else
-                MessageBox.Show("Folder shared!");
-        }
-
-        private void UnshareFolderButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!SetState(AppState.NoFolderSelected))
-                MessageBox.Show("Uh uh");
-            else
-                MessageBox.Show("Folder is no longer shared!");
-
-        }
-
-        private void SelectFolder2Button_Click(object sender, RoutedEventArgs e)
-        {
-            CommonOpenFileDialog dialog = new CommonOpenFileDialog();
-            dialog.IsFolderPicker = true;
-
-            if (dialog.ShowDialog() == CommonFileDialogResult.Ok)
-            {
-                folderTwoPath = dialog.FileName;
-            }
-        }
-
-        private void ShareFolder2Button_Click(object sender, RoutedEventArgs e)
-        {
-            folderTwoListener = new FolderListener(folderTwoPath);
-        }
-
         private void AddNewFolderButton_Click(object sender, RoutedEventArgs e)
         {
             // Microsoft.WindowsAPICodePack.Dialogs
@@ -259,13 +138,9 @@ namespace Filentropia
             {
                 if(!AddFolderListener(dialog.FileName))
                 {
-                    MessageBox.Show("Folder is already in list!");
+                    _ = MessageBox.Show("Folder is already in list!");
                 }
             }
-        }
-
-        private void FolderListenersListBox_SizeChanged(object sender, SizeChangedEventArgs e)
-        {
         }
     }
 }

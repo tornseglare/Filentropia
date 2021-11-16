@@ -20,8 +20,8 @@ namespace Filentropia
     /// </summary>
     public partial class UserControlFolderListener : UserControl
     {
-        protected FolderListener folderListener;
-        protected MainWindow mainWindow;
+        private readonly FolderListener folderListener;
+        private readonly MainWindow mainWindow;
 
         public string FolderName
         {
