@@ -53,6 +53,37 @@ namespace Filentropia
     }
 
     /// <summary>
+    /// File is newly shared and must be compared to other shared folders. Most of the time the files are equal, so the file content are not sent along, instead the hash of the file is used to compare.
+    /// </summary>
+    public record FileSyncEvent : FileEvent
+    {
+        public FileSyncEvent()
+        {
+            Event = eFileEvents.Sync;
+        }
+
+        /// <summary>
+        /// The file's creation date and time.
+        /// </summary>
+        public DateTime FileCreationTime { get; init; }
+
+        /// <summary>
+        /// The file's last write datetime.
+        /// </summary>
+        public DateTime FileLastWriteTime { get; init; }
+
+        /// <summary>
+        /// The file's size in bytes.
+        /// </summary>
+        public long FileSize { get; init; }
+
+        /// <summary>
+        /// The SHA512 hash for the file. 64 bytes encoded into a hexadecimal string, 128 characters long.
+        /// </summary>
+        public string SHA512 { get; init; }
+    }
+
+    /// <summary>
     /// A name change event need both old and new filename.
     /// </summary>
     public record FileNameChangedEvent : FileEvent
@@ -185,7 +216,7 @@ namespace Filentropia
 
         public void FileShared(string fileName)
         {
-            FileEvent fe = new() { Event = eFileEvents.Sync, FileName = fileName };
+            FileSyncEvent fe = new() { FileName = fileName };
             Debug.WriteLine(fe);
 
             lock (fileEventsLock)

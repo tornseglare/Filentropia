@@ -20,7 +20,9 @@ using System.Collections.ObjectModel;
 
 namespace Filentropia
 {
-    /* JUST NU: Se rad 84 i FolderListener.cs
+    /* JUST NU: Se rad 131 i FolderListener.cs
+     * 
+     * TODO: Det vore najs med ett fil-typs-filter, tänk hiskeliga visual studio projekt. (Men det kräver ju stöd för katalog-struktur, vilket jag inte har)
      * 
       -DONE: När ett file event har ägt rum så kan en simpel timer skapas, som startas om varje gång ett event händer.  
        På det viset blir det mindre 'trafik', dvs. den samlar ihop flera events innan den börjar arbeta.
