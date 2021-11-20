@@ -57,11 +57,63 @@ namespace Filentropia
         }
     }
 
+    public static class FileOperations
+    {
+        /// <summary>
+        ///  We don't work async here as the order of events are important. For example, if a file is Changed, then Renamed, 
+        ///  we don't want the Renamed event to come first just because the file is big and takes a long time to read.
+        /// </summary>
+        public static byte[] GetFile(string fileName)
+        {
+            byte[] bytes = File.ReadAllBytes(fileName);
+            return bytes;
+        }
+
+        /// <summary>
+        /// Returns a new fileSyncEvent updated with it's files details and hash-string.
+        /// </summary>
+        public static FileSyncEvent GetFileInfo(string folderPath, FileSyncEvent fileSyncEvent)
+        {
+            string fileName = folderPath + Path.DirectorySeparatorChar + fileSyncEvent.FileName;
+
+            FileInfo fi = new FileInfo(fileName);
+
+            FileSyncEvent fse = fileSyncEvent with
+            {
+                FileCreationTime = fi.CreationTimeUtc,
+                FileLastWriteTime = fi.LastWriteTimeUtc,
+                FileSize = fi.Length,
+                SHA512 = ComputeSHA512(fileName)
+            };
+
+            return fse;
+        }
+
+        public static string ComputeSHA512(string fileName)
+        {
+            using (var sha512 = SHA512.Create())
+            {
+                using (var stream = File.OpenRead(fileName))
+                {
+                    byte[] hashBytes = sha512.ComputeHash(stream); // 64 bytes = 512 bits
+
+                    StringBuilder sb = new();
+                    foreach (byte bt in hashBytes)
+                    {
+                        _ = sb.Append(bt.ToString("x2")); // Convert byte to hexadecimal string, number 13 -> "0D"
+                    }
+
+                    string SHA512 = sb.ToString(); // 64 bytes becomes 128 characters. Smaller files than this are wasteful. :-)
+
+                    return SHA512;
+                }
+            }
+        }
+    }
+
     public interface IReceiver
     {
         bool SendEvent(byte[] fileContent, FileEvent fileEvent);
-
-        bool SendEvent(FileEvent fileEvent);
     }
 
     /// <summary>
@@ -85,11 +137,6 @@ namespace Filentropia
         {
             throw new NotImplementedException();
         }
-
-        public bool SendEvent(FileEvent fileEvent)
-        {
-            throw new NotImplementedException();
-        }
     }
 
     /// <summary>
@@ -98,7 +145,7 @@ namespace Filentropia
     public class FolderReceiver : IReceiver
     {
         private string folderPath;
-
+        private FolderListener myFolderListener;
         private Exception lastException;
 
         public Exception LastException
@@ -111,8 +158,9 @@ namespace Filentropia
             }
         }
 
-        public FolderReceiver(string folderPath)
+        public FolderReceiver(FolderListener folderListener, string folderPath)
         {
+            myFolderListener = folderListener;
             this.folderPath = folderPath;
         }
 
@@ -120,7 +168,7 @@ namespace Filentropia
         {
             bool res = fileEvent.Event switch
             {
-                eFileEvents.Sync => HandleSyncEvent(fileContent, fileEvent),             // Create the file if it does not exist.
+                eFileEvents.Sync => HandleSyncEvent((FileSyncEvent)fileEvent),                         // See if the specified file-name exists. 
                 eFileEvents.Deleted => HandleDeletedEvent(fileEvent),                    // Delete the file.
                 eFileEvents.Renamed => HandleRenamedEvent(fileEvent),                    // Rename the file.
                 eFileEvents.Created => HandleCreatedEvent(fileContent, fileEvent),       // Create the file.
@@ -131,23 +179,96 @@ namespace Filentropia
             return res;
         }
 
-        public bool SendEvent(FileEvent fileEvent)
+        /// <summary>
+        /// See if the specified file-name exists. If so, compare. If different, decide if we want the file sent to us, or the sender should have our file.
+        /// </summary>
+        private bool HandleSyncEvent(FileSyncEvent fileEvent)
         {
-            bool res = fileEvent.Event switch
-            {
-//                eFileEvents.Sync => HandleSyncEvent(fileEvent),             // Create the file if it does not exist.
-                eFileEvents.Deleted => HandleDeletedEvent(fileEvent),       // Delete the file.
-                eFileEvents.Renamed => HandleRenamedEvent(fileEvent),       // Rename the file.
-                _ => throw new FolderListenerException("Missing or wrong case in SendEvent!")
-            };
+            // TODO: FolderListener för den här katalogen får nu ett created event, som den måste strunta i! Vi får meddela den att denna filen just skapats eller nåt i den stilen. 
+            // ONGOING: Både created och modified datum sätts till när filen skapas, vilket ju förstör historik. Vi måste sätta dessa specifikt, sådan information måste ju följa med vid kopieringen.
+            //   <-Se 
 
-            return res;
+            string targetFileName = folderPath + Path.DirectorySeparatorChar + fileEvent.FileName;
+
+            if (File.Exists(targetFileName))
+            {
+                // The file exists. 
+
+                //  a. Vi ser nu att filen redan finns.
+                //     1. Filen finns redan. Det här är ju ett Sync-event, och vi vill ju inte få våra filer överskrivna hur som helst. 
+                //          x. Jmfr datum. Nyare fil ersätter äldre. En äldre inkommande fil ignoreras. 
+                //          y. Samma datum, jmfr storlek, och om nödvändigt hashen. Ifall de skiljer sig åt bestämmer vi att deras fil gäller.
+                //     2. Ifall vår fil ska ersättas av deras, gör en file request.
+                //     3. Vår fil ska ersätta deras, gör en file changed event och skicka filen.
+
+                FileInfo fi = new FileInfo(targetFileName);
+                // DateTime creationTime = fi.CreationTimeUtc;
+                DateTime lastWriteTime = fi.LastWriteTimeUtc;
+
+                long fileSize = fi.Length;
+
+                if(lastWriteTime > fileEvent.FileLastWriteTime)
+                {
+                    // Our file is newer. Their file should be overwritten with ours.
+                }
+                else if(lastWriteTime < fileEvent.FileLastWriteTime)
+                {
+                    // Their file is newer. We should request their file.
+                }
+                else
+                {
+                    // Same last modifed date.
+                    bool equal = false;
+
+                    if (fileSize == fileEvent.FileSize)
+                    {
+                        // We need to compare files to see if they are equal.
+                        string SHA512 = FileOperations.ComputeSHA512(targetFileName);
+
+                        if(SHA512 == fileEvent.SHA512)
+                        {
+                            // Files are equal. We are done, nothing needs to happen.
+                            equal = true;
+                        }
+                        else
+                        {
+                            // Files are different since their hash are not equal.
+                        }
+                    }
+                    else
+                    {
+                        // Files are different since their filesize are not equal.
+                    }
+
+                    if(equal == false)
+                    {
+                        // Files are different, but have the same write time. Since opposite side just shared their file, we should request their file. The backup folders ensure users can fix this mess afterwards.
+                    }
+                }
+            }
+            else
+            {
+                // File does not exist. Request it.
+
+                // Ignore the next file created event.
+                myFolderListener.IgnoreNextFileCreatedEvent(fileEvent.FileName);
+
+                // TEMP: Create the file so we can get the event. 
+                using (FileStream file = File.Create(targetFileName))
+                {
+                    byte[] blargh = { 12, 13, 14 };
+                    file.Write(blargh);
+                    file.Close();
+                }
+            }
+
+            return true;
         }
 
         /// <summary>
         /// Create the file if it does not exist. If it do exist, perform magical steps.
         /// </summary>
-        private bool HandleSyncEvent(byte[] fileContent, FileEvent fileEvent)
+        private bool HandleSyncEvent_old(byte[] fileContent, FileEvent fileEvent)
         {
             // TODO: FolderListener för den här katalogen får nu ett created event, som den måste strunta i! Vi får meddela den att denna filen just skapats eller nåt i den stilen. 
             // TODO: Både created och modified datum sätts till när filen skapas, vilket ju förstör historik. Vi måste sätta dessa specifikt, sådan information måste ju följa med vid kopieringen.
@@ -229,6 +350,9 @@ namespace Filentropia
             // <-Som synes, det är samma förfarande som för Sync eventet, den enda skillnaden är att här i detta fallet är det märkligt. Filen borde inte existera nämligen, 
             //   och den enda förklaringen jag har just nu är att de har skapat filen på varsin dator samtidigt. Anyway, på det här viset är det ändå säkert.
             // 
+
+            // myFolderListener.IgnoreNextFileCreatedEvent(fileEvent.FileName);
+
             return true;
         }
 
@@ -243,6 +367,9 @@ namespace Filentropia
             //   Det vore extra katastrofalt eftersom windows soptunna inte används av appen by default, tror jag? Med andra ord skulle endast den som 
             //   raderade alla filer kunna återställa dem! 
             // 
+
+            // myFolderListener.IgnoreNextFileDeletedEvent(fileEvent.FileName);
+
             return true;
         }
 
@@ -256,6 +383,9 @@ namespace Filentropia
             // 
             // <-Loggen underlättar debug-arbete.
             // 
+
+            // myFolderListener.IgnoreNextFileRenamedEvent(fileEvent.FileName);
+
             return true;
         }
 
@@ -266,7 +396,7 @@ namespace Filentropia
             //  a. Filen finns redan.
             //     1. Filen finns redan. Det här är ju ett Changed-event, så vi vill gärna ha ändringarna.
             //     2. Skapa en .backup folder, flytta den existerande filen dit.
-            //     3. .backup/log.txt får en ny rad om att filen ifråga kopierats hit, och ett datum+tid.
+            //     3. .backup/log.txt får en ny rad om att filen ifråga flyttats hit, och ett datum+tid.
             //     4. Kopiera in den nya/ändrade filen. 
             //  b. Filen finns inte här. Kopiera in den nya filen.
             // 
@@ -274,6 +404,8 @@ namespace Filentropia
             //   och den enda förklaringen jag har just nu är att mottagaren har raderat filen i samma ögonblick. Anyway, på det här viset blir det annoying men säkert,
             //   mottagaren ser att hans nyss raderade fil dyker upp igen. En van användare inser att någon annan arbetar på filen och avvaktar. 
             // 
+
+            // myFolderListener.IgnoreNextFileChangedEvent(fileEvent.FileName);
 
             return true;
         }
@@ -348,20 +480,20 @@ namespace Filentropia
             //     
 
             //byte[] bytes = GetFile(fileEvent.FileName);
-            fileEvent = GetFileInfo(fileEvent);
+            fileEvent = FileOperations.GetFileInfo(srcFolderPath, fileEvent);
 
+            return receiver.SendEvent(null, fileEvent);
 
-            if (bytes != null)
-            {
-                // Cool, we have a file, a sender, and a receiver. Send the stuff.
-                receiver.SendEvent(bytes, fileEvent);
-            }
-            else
-            {
-                return false;
-            }
-
-            return true;
+            //if (bytes != null)
+            //{
+            //    // Cool, we have a file, a sender, and a receiver. Send the stuff.
+            //    receiver.SendEvent(bytes, fileEvent);
+            //}
+            //else
+            //{
+            //    return false;
+            //}
+            //return true;
         }
 
         private bool HandleCreatedEvent(FileEvent fileEvent)
@@ -428,77 +560,24 @@ namespace Filentropia
             //   mottagaren ser att hans nyss raderade fil dyker upp igen. En van användare inser att någon annan arbetar på filen och avvaktar. 
             // 
 
-            byte[] bytes = GetFile(fileEvent.FileName);
-
-            if(bytes != null)
-            {
-                // Cool, we have a file, a sender, and a receiver. 
-                receiver.SendEvent(bytes, fileEvent);
-            }
-            else
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>
-        ///  We don't work async here as the order of events are important. For example, if a file is Changed, then Renamed, 
-        ///  we don't want the Renamed event to come first just because the file is big and takes a long time to read.
-        /// </summary>
-        private byte[] GetFile(string fileName)
-        {
             try
             {
-                byte[] bytes = File.ReadAllBytes(srcFolderPath + Path.DirectorySeparatorChar + fileName);
-                return bytes;
+                byte[] bytes = FileOperations.GetFile(srcFolderPath + Path.DirectorySeparatorChar + fileEvent.FileName);
+
+                if (bytes != null)
+                {
+                    // Cool, we have a file, a sender, and a receiver. 
+                    return receiver.SendEvent(bytes, fileEvent);
+                }
+                else
+                {
+                    return false;
+                }
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 lastException = ex;
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Returns a new fileSyncEvent updated with it's files details and hash-string.
-        /// </summary>
-        /// <param name="fileSyncEvent"></param>
-        /// <returns></returns>
-        private FileSyncEvent GetFileInfo(FileSyncEvent fileSyncEvent)
-        {
-            FileInfo fi = new FileInfo(fileSyncEvent.FileName);
-            
-            FileSyncEvent fse = fileSyncEvent with
-            {
-                FileCreationTime = fi.CreationTimeUtc,
-                FileLastWriteTime = fi.LastWriteTimeUtc,
-                FileSize = fi.Length,
-                SHA512 = ComputeSHA512(fileSyncEvent.FileName)
-            };
-
-            return fse;
-        }
-
-        private string ComputeSHA512(string fileName)
-        {
-            using (var sha512 = SHA512.Create())
-            {
-                using (var stream = File.OpenRead(fileName))
-                {
-                    byte[] hashBytes = sha512.ComputeHash(stream); // 64 bytes = 512 bits
-
-                    StringBuilder sb = new();
-                    foreach (byte bt in hashBytes)
-                    {
-                        _ = sb.Append(bt.ToString("x2")); // Convert byte to hexadecimal string, number 13 -> "0D"
-                    }
-
-                    string SHA512 = sb.ToString(); // 64 bytes becomes 128 characters. Smaller files than this are wasteful. :-)
-
-                    return SHA512;
-                }
+                return false;
             }
         }
     }
@@ -514,9 +593,10 @@ namespace Filentropia
         private FileSystemWatcher watcher;
         private FileEvents fileEvents = new();
         private readonly Timer fileEventTimer = new();
+        private readonly List<FileEvent> fileEventsToIgnore = new();
 
         // My, mine, this folders listener for file events incoming from other sources.
-        private FolderReceiver myFolderTarget;
+        private readonly FolderReceiver myFolderTarget;
 
         public string FolderPath { get; init; }
 
@@ -539,7 +619,7 @@ namespace Filentropia
             fileEventTimer.AutoReset = false;
             fileEventTimer.Elapsed += FileEventTimer_Elapsed;
 
-            myFolderTarget = new FolderReceiver(folderPath);
+            myFolderTarget = new FolderReceiver(this, folderPath);
         }
 
         /// <summary>
@@ -697,35 +777,92 @@ namespace Filentropia
 
         private void FolderContent_Deleted(object sender, FileSystemEventArgs e)
         {
-            MessageBox.Show("File deleted: " + e.Name);
+            int count = fileEventsToIgnore.RemoveAll(x => x.Event == eFileEvents.Deleted && x.FileName == e.Name && x.TimeOfEvent <= DateTime.Now);
 
-            // Delete file online as well.
-            fileEvents.FileDeleted(e.Name);
+            if (count == 0)
+            {
+                MessageBox.Show("File deleted: " + e.Name);
+
+                // Delete file online as well.
+                fileEvents.FileDeleted(e.Name);
+            }
         }
 
         private void FolderContent_Renamed(object sender, RenamedEventArgs e)
         {
-            MessageBox.Show("File renamed: " + e.OldName + " -> " + e.Name);
+            int count = fileEventsToIgnore.RemoveAll(x => x.Event == eFileEvents.Renamed && x.FileName == e.Name && x.TimeOfEvent <= DateTime.Now);
 
-            // Rename file online as well.
-            fileEvents.FileRenamed(e.OldName, e.Name);
+            if (count == 0)
+            {
+                MessageBox.Show("File renamed: " + e.OldName + " -> " + e.Name);
+
+                // Rename file online as well.
+                fileEvents.FileRenamed(e.OldName, e.Name);
+            }
         }
 
         private void FolderContent_Created(object sender, FileSystemEventArgs e)
         {
-            MessageBox.Show("File created: " + e.Name);
+            // Check for and remove any file created event in the ignore-list.
+            int count = fileEventsToIgnore.RemoveAll(x => x.Event == eFileEvents.Created && x.FileName == e.Name && x.TimeOfEvent <= DateTime.Now);
 
-            // Upload new file to server.
-            fileEvents.FileCreated(e.Name);
+            if (count == 0)
+            {
+                MessageBox.Show("File created: " + e.Name);
+
+                // Upload new file to server.
+                fileEvents.FileCreated(e.Name);
+            }
+            else
+            {
+                // File created was in the ignore-list, which just means we should ignore this Creaed event.
+            }
         }
 
         private void FolderContent_Changed(object sender, FileSystemEventArgs e)
         {
-            MessageBox.Show("File changed: " + e.Name);
+            int count = fileEventsToIgnore.RemoveAll(x => x.Event == eFileEvents.Changed && x.FileName == e.Name && x.TimeOfEvent <= DateTime.Now);
 
-            // Upload and overwrite file at server.
-            fileEvents.FileChanged(e.Name);
+            if (count == 0)
+            {
+                MessageBox.Show("File changed: " + e.Name);
+
+                // Upload and overwrite file at server.
+                fileEvents.FileChanged(e.Name);
+            }
         }
+
+        /// <summary>
+        /// When a file is created, it is also written to, so followed by a Changed event. Add both.
+        /// The next file created event with a Created-time bigger than or equal to this will be ignored.
+        /// </summary>
+        internal void IgnoreNextFileCreatedEvent(string fileName)
+        {
+            FileEvent fileEvent = new() { Event = eFileEvents.Created, FileName = fileName };
+            fileEventsToIgnore.Add(fileEvent);
+
+            fileEvent = new() { Event = eFileEvents.Changed, FileName = fileName };
+            fileEventsToIgnore.Add(fileEvent);
+        }
+
+        internal void IgnoreNextFileChangedEvent(string fileName)
+        {
+            FileEvent fileEvent = new() { Event = eFileEvents.Changed, FileName = fileName };
+            fileEventsToIgnore.Add(fileEvent);
+        }
+
+        internal void IgnoreNextFileDeletedEvent(string fileName)
+        {
+            FileEvent fileEvent = new() { Event = eFileEvents.Deleted, FileName = fileName };
+            fileEventsToIgnore.Add(fileEvent);
+        }
+
+        internal void IgnoreNextFileRenamedEvent(string fileName)
+        {
+            FileEvent fileEvent = new() { Event = eFileEvents.Renamed, FileName = fileName };
+            fileEventsToIgnore.Add(fileEvent);
+        }
+
 
         public void Dispose()
         {

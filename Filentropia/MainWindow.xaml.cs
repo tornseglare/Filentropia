@@ -20,7 +20,13 @@ using System.Collections.ObjectModel;
 
 namespace Filentropia
 {
-    /* JUST NU: Se rad 131 i FolderListener.cs
+    /* JUST NU: Se rad 184 i FolderListener.cs,
+     *  En tankegång är att skapa en ny typ av FileEvent, FileRequest och FileForced. FileRequest är vad det låter som, vi vill ha en viss fil skickad till oss.
+     *  FileForced är svar på det, då skickas filen och mottagaren skriver över sin fil, med liknande regler som i HandleChangedEvent, förutom att filen är just enforcad.
+     *  FileEnforced skickas också då vi beslutat att vår fil ska ersätta deras. Dessa två eventen kommer i skvalpvågorna av Synced eventet som ju är lite komplicerat.
+     *  (när man börjar dela sin katalog så kan ju mottagarens katalog se ut hur som helst. Vi måste ta höjd för det)
+     *  <-Apropå det, om någon delar sin katalog mot en server, och någon senare ansluter, well, det ska ju fungera.
+     *
      * 
      * TODO: Det vore najs med ett fil-typs-filter, tänk hiskeliga visual studio projekt. (Men det kräver ju stöd för katalog-struktur, vilket jag inte har)
      * 
