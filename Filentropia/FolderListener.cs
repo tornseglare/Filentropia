@@ -259,6 +259,13 @@ namespace Filentropia
                     byte[] blargh = { 12, 13, 14 };
                     file.Write(blargh);
                     file.Close();
+
+                    // Set file's creation time to same as source; we are not interested in when this app actually created the file. Same goes for last write time.
+                    File.SetCreationTimeUtc(targetFileName, fileEvent.FileCreationTime);
+                    File.SetLastWriteTimeUtc(targetFileName, fileEvent.FileLastWriteTime);
+                    
+                    // Kind of useless, as we would get the time our app touched the source file. Better have the time the app wrote to the file.
+                    // File.SetLastAccessTimeUtc(targetFileName, fileEvent.FileLastWriteTime);
                 }
             }
 
@@ -736,14 +743,15 @@ namespace Filentropia
 
             watcher = new FileSystemWatcher(FolderPath);
 
-            /*watcher.NotifyFilter = NotifyFilters.Attributes
-                                | NotifyFilters.CreationTime
+            // We are not interested in changes to creation, lastacess or lastwrite date. 
+            watcher.NotifyFilter = NotifyFilters.Attributes
+                                // | NotifyFilters.CreationTime
                                 | NotifyFilters.DirectoryName
                                 | NotifyFilters.FileName
-                                | NotifyFilters.LastAccess
-                                | NotifyFilters.LastWrite
-                                | NotifyFilters.Security
-                                | NotifyFilters.Size;*/
+                                // | NotifyFilters.LastAccess
+                                // | NotifyFilters.LastWrite
+                                // | NotifyFilters.Security
+                                | NotifyFilters.Size;
 
             // Any file changed, created, renamed or deleted in the folder.
             watcher.Changed += FolderContent_Changed;
